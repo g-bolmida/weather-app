@@ -1,4 +1,4 @@
-module github.com/g-bolmida/weather-app-backend
+module github.com/g-bolmida/weather-app
 
 go 1.18
 
