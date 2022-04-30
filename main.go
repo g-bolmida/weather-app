@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"strconv"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
 
@@ -47,88 +50,90 @@ type ForecastResponse struct {
 }
 
 func main() {
-	app := tview.NewApplication()
-	citySelectForm := tview.NewForm().
-		AddInputField("City Name", "Oxford", 20, nil, nil).
-		AddInputField("State Name", "OH", 20, nil, nil).
+
+	weatherAppUI := tview.NewApplication()
+
+	var citySelection *tview.Form
+	var columns *tview.Table
+	var flex *tview.Flex
+
+	columns = tview.NewTable().SetBorders(true)
+	columns.SetBorder(true).SetTitle("Select A City and State")
+
+	citySelection = tview.NewForm().
+		AddInputField("City Name", "", 20, nil, nil).
+		AddInputField("State Name", "", 20, nil, nil).
 		AddButton("Submit", func() {
-			app.Stop()
+			cityVal := citySelection.GetFormItem(0).(*tview.InputField).GetText()
+			stateVal := citySelection.GetFormItem(1).(*tview.InputField).GetText()
+			
+			if cityVal == "" || stateVal == "" {
+				log.Fatal("City or State not entered...\n")
+				weatherAppUI.Stop()
+			}
+			
+			getCoords, getForecast := apiCalls(cityVal, stateVal)
+
+			columns.SetTitle(getCoords.Results[0].FormattedAddress)
+
+			for i := 0; i <= 12; i++ {
+				columns.SetCell(i, 0, tview.NewTableCell(getForecast.Properties.Periods[i].Name).SetTextColor(tcell.ColorBlue).SetAlign(tview.AlignCenter))
+				
+				columns.SetCell(i, 1, tview.NewTableCell(strconv.Itoa(getForecast.Properties.Periods[i].Temperature) + "°F").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
+				
+				columns.SetCell(i, 2, tview.NewTableCell(getForecast.Properties.Periods[i].WindSpeed).SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
+				
+				columns.SetCell(i, 3, tview.NewTableCell(getForecast.Properties.Periods[i].ShortForecast).SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+				
+			}
+
+			weatherAppUI.SetFocus(columns)
 		})
 
-	citySelectForm.SetBorder(true).SetTitle("Select a City and State").SetTitleAlign(tview.AlignLeft)
+	flex = tview.NewFlex().
+		AddItem(citySelection, 0, 1, true).
+		AddItem(columns, 0, 3, false)
 
-	if err := app.SetRoot(citySelectForm, true).EnableMouse(true).Run(); err != nil {
-		panic(err)
-	}
+	weatherAppUI.SetRoot(flex, true).SetFocus(citySelection)
+	weatherAppUI.Run()
 
-	fmt.Printf("%s %s\n", citySelectForm.GetFormItem(0).(*tview.InputField).GetText(), citySelectForm.GetFormItem(1).(*tview.InputField).GetText())
+}
 
-	//apiTest := googleQuery(citySelectForm.GetFormItem(0).(*tview.InputField).GetText(), citySelectForm.GetFormItem(1).(*tview.InputField).GetText())
-	//fmt.Printf("%+v\n", apiTest.Results[0].FormattedAddress)
-	//fmt.Printf("%+v\n", apiTest.Results[0].Geometry.Location.Lat)
-	//fmt.Printf("%+v\n", apiTest.Results[0].Geometry.Location.Lng)
+func apiCalls(city string, state string) (GeocodeResponse, ForecastResponse) {
+	googleResponse := googleQuery(city, state)
 
-	//latCnv := strconv.FormatFloat(apiTest.Results[0].Geometry.Location.Lat, 'f', 5, 64)
-	//lngCnv := strconv.FormatFloat(apiTest.Results[0].Geometry.Location.Lng, 'f', 5, 64)
-	//weatherApiTest := weatherPointQuery(latCnv, lngCnv)
-	//fmt.Printf("%v\n", weatherApiTest.Properties.Forecast)
+	latCnv := strconv.FormatFloat(googleResponse.Results[0].Geometry.Location.Lat, 'f', 5, 64)
+	lngCnv := strconv.FormatFloat(googleResponse.Results[0].Geometry.Location.Lng, 'f', 5, 64)
 
-	//forecastTest := forecastQuery(weatherApiTest.Properties.Forecast)
-	//fmt.Println(forecastTest)
+	pointResponse := weatherPointQuery(latCnv, lngCnv)
+
+	weatherForecastResponse := forecastQuery(pointResponse.Properties.Forecast)
+
+	return googleResponse, weatherForecastResponse
 }
 
 func googleQuery(city string, state string) GeocodeResponse {
 	googleApiEndpoint := "https://maps.googleapis.com/maps/api/geocode/json?address="
 	googleApiKey := "&key=CHANGEME"
 
-	client := &http.Client{}
-	reqUri := googleApiEndpoint + city + "+" + state + googleApiKey
-	request, err := http.NewRequest("GET", reqUri, nil)
-	if err != nil {
-		fmt.Print(err.Error())
-	}
+	reqEndpoint := googleApiEndpoint + city + "+" + state + googleApiKey
 
-	response, err := client.Do(request)
-	if err != nil {
-		fmt.Print(err.Error())
-	}
-	defer response.Body.Close()
-
-	responseBytes, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		fmt.Print(err.Error())
-	}
+	googleResponse := makeRequest(reqEndpoint)
 
 	var responseObj GeocodeResponse
-	json.Unmarshal(responseBytes, &responseObj)
+	json.Unmarshal(googleResponse, &responseObj)
 
 	return responseObj
 }
 
 func weatherPointQuery(lat string, lng string) WeatherPointResponse {
 	weatherPtApiEndpoint := "https://api.weather.gov/points/"
+	reqEndpoint := weatherPtApiEndpoint + lat + "," + lng
 
-	client := &http.Client{}
-	reqUri := weatherPtApiEndpoint + lat + "," + lng
-
-	request, err := http.NewRequest("GET", reqUri, nil)
-	if err != nil {
-		fmt.Print(err.Error())
-	}
-
-	response, err := client.Do(request)
-	if err != nil {
-		fmt.Print(err.Error())
-	}
-	defer response.Body.Close()
-
-	responseBytes, err := ioutil.ReadAll(response.Body)
-	if err != nil {
-		fmt.Print(err.Error())
-	}
+	pointResponse := makeRequest(reqEndpoint)
 
 	var responseObj WeatherPointResponse
-	json.Unmarshal(responseBytes, &responseObj)
+	json.Unmarshal(pointResponse, &responseObj)
 
 	return responseObj
 }
@@ -136,10 +141,17 @@ func weatherPointQuery(lat string, lng string) WeatherPointResponse {
 func forecastQuery(url string) ForecastResponse {
 	forecastApiEndpoint := url
 
-	client := &http.Client{}
-	reqUri := forecastApiEndpoint
+	forecastResponse := makeRequest(forecastApiEndpoint)
 
-	request, err := http.NewRequest("GET", reqUri, nil)
+	var responseObj ForecastResponse
+	json.Unmarshal(forecastResponse, &responseObj)
+
+	return responseObj
+}
+
+func makeRequest(endpoint string) []byte {
+	client := &http.Client{}
+	request, err := http.NewRequest("GET", endpoint, nil)
 	if err != nil {
 		fmt.Print(err.Error())
 	}
@@ -155,8 +167,5 @@ func forecastQuery(url string) ForecastResponse {
 		fmt.Print(err.Error())
 	}
 
-	var responseObj ForecastResponse
-	json.Unmarshal(responseBytes, &responseObj)
-
-	return responseObj
+	return responseBytes
 }
